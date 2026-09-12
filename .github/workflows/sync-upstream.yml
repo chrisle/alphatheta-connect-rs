@@ -84,8 +84,15 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
+          # Several jobs share this host's ~/.cargo and ~/.rustup, so never let
+          # rustup rewrite its own binary or the proxies underneath a running job:
+          # no self-update, and no install at all when stable is already usable.
+          rustup set auto-self-update disable >/dev/null 2>&1 || true
+          if ! rustup run stable cargo fmt --version >/dev/null 2>&1 \
+             || ! rustup run stable cargo clippy --version >/dev/null 2>&1; then
+            rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          fi
+          rustup default stable >/dev/null
 
       - name: Ensure system libraries
         run: |
@@ -277,6 +284,13 @@ jobs:
           git config user.email "$BOT_EMAIL"
           git checkout -q -b "$BRANCH"
           git add -A
+
+          # Only reachable when the lock file did not move either (a test run
+          # with base_override pointing at what is already ported).
+          if git diff --cached --quiet; then
+            echo "Nothing to commit: the port already matches upstream $SHORT." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           subject="feat: follow upstream alphatheta-connect $SHORT"
           if [ -s "$RUNNER_TEMP/port/commit-message.txt" ]; then
