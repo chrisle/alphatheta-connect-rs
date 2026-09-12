@@ -1,0 +1,6 @@
+/target
+# Claude Code agent and skills stay local to each machine (installed on the
+# runner host by scripts/install-agent.sh), never in version control.
+/.claude/
+.DS_Store
+*.log
