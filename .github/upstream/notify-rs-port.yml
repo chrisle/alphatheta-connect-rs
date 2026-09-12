@@ -1,0 +1,25 @@
+# This workflow belongs in the UPSTREAM repository (chrisle/alphatheta-connect)
+# at .github/workflows/notify-rs-port.yml. It is kept here as the reference
+# copy; it does nothing in this repository.
+#
+# On every push to main it fires a repository_dispatch at
+# chrisle/alphatheta-connect-rs so the Rust port syncs within minutes instead
+# of waiting for the scheduled poll. It needs a secret RS_PORT_DISPATCH_TOKEN in
+# the upstream repository: a token with `repo` scope on alphatheta-connect-rs.
+name: Notify Rust port
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch upstream-changed to alphatheta-connect-rs
+        env:
+          GH_TOKEN: ${{ secrets.RS_PORT_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/chrisle/alphatheta-connect-rs/dispatches \
+            -f event_type=upstream-changed \
+            -F 'client_payload[ref]=${{ github.sha }}'
