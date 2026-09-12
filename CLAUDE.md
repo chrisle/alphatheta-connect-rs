@@ -43,3 +43,22 @@ is built from source (needs a C toolchain and perl).
 - Commit `.claude/` (git-ignored on purpose: the porting agent and skill are
   installed on the runner host by `scripts/install-agent.sh`).
 - Edit `.github/` or `scripts/` from the porting agent.
+
+## Known deviations from upstream (v0.25.3)
+
+Places where the port follows the spec or the evident intent rather than the
+TypeScript as written. Re-check these when syncing.
+
+- `makeSongStructure` reads `entry.index/beat/kind/fill/beatFill` and
+  `body.rawBank`, which the Kaitai-generated object does not have; the port
+  uses `phrase_number`, `beat_number`, `kind`, `fill_in`,
+  `fill_in_beat_number` and `bank`.
+- `makeCueAndLoop` uses the cue `type` (1/2) as the hot cue button; the port
+  uses `hot_cue`.
+- `makeStatusPacket` writes the magic header at 0x0b (overwritten by the
+  name); the port writes it at 0x00. Nothing sends this packet.
+- `getPlaylist.viaLocal` looks tracks up by the playlist entry id; the port
+  exposes `track_ids` (the entry's `track_id`).
+- `MetadataORM` is in-memory maps rather than in-memory SQLite.
+- Telemetry (a no-op upstream) is not ported.
+- The XDR/RPC client matches replies by xid; upstream takes the next datagram.
