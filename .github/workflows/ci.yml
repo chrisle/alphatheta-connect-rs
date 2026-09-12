@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The arc hosts carry whatever was installed by hand; the workflow is the
+      # record of what a build needs. rustup lives under ~/.cargo, which a
+      # non-interactive runner shell does not have on PATH.
+      - name: Ensure Rust toolchain
+        run: |
+          set -euo pipefail
+          if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      # SQLCipher is built from source with a vendored OpenSSL, so the host
+      # needs a C toolchain and perl. libpcap-dev is only needed for the
+      # `passive` feature.
+      - name: Ensure system libraries
+        run: |
+          set -euo pipefail
+          missing=""
+          for pkg in build-essential perl pkg-config libpcap-dev; do
+            dpkg -s "$pkg" >/dev/null 2>&1 || missing="$missing $pkg"
+          done
+          if [ -n "$missing" ]; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $missing
+          fi
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --all-features
+
+      - name: Test
+        run: cargo test --all-features
