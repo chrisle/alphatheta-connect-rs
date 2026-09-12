@@ -1,0 +1,53 @@
+[package]
+name = "alphatheta-connect"
+version = "0.25.3"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "AlphaTheta / Pioneer PRO DJ LINK protocol: consume CDJ state and retrieve complete track metadata. Rust port of the alphatheta-connect TypeScript library."
+repository = "https://github.com/chrisle/alphatheta-connect-rs"
+homepage = "https://github.com/chrisle/alphatheta-connect-rs"
+keywords = ["alphatheta", "prolink", "pro-dj-link", "cdj", "pioneer"]
+categories = ["network-programming", "multimedia"]
+readme = "README.md"
+exclude = [".github/", "scripts/", "UPSTREAM_COMMIT"]
+
+[lib]
+name = "alphatheta_connect"
+path = "src/lib.rs"
+
+[[bin]]
+name = "alphatheta-connect"
+path = "src/bin/cli.rs"
+required-features = ["cli"]
+
+[features]
+default = []
+# Passive (pcap) capture of the Pro DJ Link network. Needs libpcap at link
+# time (libpcap-dev on Debian, Npcap on Windows).
+passive = ["dep:pcap"]
+cli = ["dep:tracing-subscriber"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util", "fs"] }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+sha2 = "0.11"
+flate2 = "1"
+rand = "0.10"
+if-addrs = "0.15"
+mac_address = "1"
+socket2 = { version = "0.6", features = ["all"] }
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+pcap = { version = "2", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"
+
+[profile.dev.package."*"]
+# SQLCipher / OpenSSL are unusable un-optimised.
+opt-level = 2
