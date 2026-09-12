@@ -38,7 +38,7 @@ on:
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: Upstream ref to sync to (default: main)
+        description: 'Upstream ref to sync to (default: main)'
         required: false
         default: main
       base_override:
