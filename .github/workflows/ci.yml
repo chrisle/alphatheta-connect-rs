@@ -30,8 +30,15 @@ jobs:
           fi
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
+          # Several jobs share this host's ~/.cargo and ~/.rustup, so never let
+          # rustup rewrite its own binary or the proxies underneath a running job:
+          # no self-update, and no install at all when stable is already usable.
+          rustup set auto-self-update disable >/dev/null 2>&1 || true
+          if ! rustup run stable cargo fmt --version >/dev/null 2>&1 \
+             || ! rustup run stable cargo clippy --version >/dev/null 2>&1; then
+            rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          fi
+          rustup default stable >/dev/null
           rustc --version
           cargo --version
 
