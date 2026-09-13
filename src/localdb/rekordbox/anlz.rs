@@ -417,9 +417,9 @@ fn parse_body(tag: SectionTag, b: &[u8], len_header: u32, len_tag: u32) -> Resul
                 if len_entry > 43 {
                     len_comment = r.u32()?;
                     let text = r.bytes(len_comment as usize)?;
-                    // The comment carries a trailing NUL.
-                    let text = &text[..text.len().saturating_sub(2)];
-                    comment = Some(utf16be(text));
+                    // The tag stores the comment with a trailing NUL, which is
+                    // not part of what the DJ typed.
+                    comment = Some(utf16be(text).trim_end_matches('\0').to_string());
                 }
                 let after_comment = len_entry.saturating_sub(len_comment);
                 let color_code = if after_comment > 44 { Some(r.u8()?) } else { None };

@@ -24,10 +24,19 @@ pub enum StagehandStartupStage {
     KeepAlive,
 }
 
-/// Generates a randomized MAC address with the AlphaTheta OUI (c8:3d:fc).
-pub fn generate_stagehand_mac() -> [u8; 6] {
-    let mut rng = rand::rng();
-    [0xc8, 0x3d, 0xfc, rng.random(), rng.random(), rng.random()]
+/// The protocol-layer MAC a Stagehand device embeds in its 0x02 claim and 0x06
+/// keep-alive: the AlphaTheta OUI (c8:3d:fc) followed by the low three bytes of
+/// the interface's own MAC.
+///
+/// This must stay stable for the life of the host. A CDJ-3000 records a peer by
+/// the identity in its claim, and once it holds a record for our IP it ignores
+/// later claims from the same IP that carry a different MAC or device number:
+/// the new peer never receives the unicast status/position stream. Observed on
+/// emulated CDJ-3000 firmware 3.20: a freshly randomized identity on every
+/// `connect()` was served once and then never again until the player rebooted,
+/// while the previously registered identity kept being served immediately.
+pub fn get_stagehand_mac(iface: &InterfaceInfo) -> [u8; 6] {
+    [0xc8, 0x3d, 0xfc, iface.mac[3], iface.mac[4], iface.mac[5]]
 }
 
 /// Generates a random Stagehand device ID in the observed range of 141 to 211.
@@ -40,7 +49,7 @@ pub fn generate_stagehand_device_id() -> DeviceId {
 /// - `iface`: the network interface to use
 /// - `id`: the device ID to use (defaults to a random Stagehand ID)
 /// - `name`: the device name (defaults to 'Stagehand')
-/// - `mac_addr`: the optional randomized MAC address
+/// - `mac_addr`: the protocol-layer MAC (defaults to one derived from `iface`)
 pub fn get_virtual_stagehand(
     iface: &InterfaceInfo,
     id: Option<DeviceId>,
@@ -52,7 +61,7 @@ pub fn get_virtual_stagehand(
         name: name.unwrap_or("Stagehand").to_string(),
         device_type: DeviceType::Stagehand,
         ip: iface.address,
-        mac_addr: mac_addr.unwrap_or_else(generate_stagehand_mac),
+        mac_addr: mac_addr.unwrap_or_else(|| get_stagehand_mac(iface)),
         last_active: None,
     }
 }
@@ -232,14 +241,44 @@ mod tests {
         Device::new("Stagehand", 154, DeviceType::Stagehand, [0xc8, 0x3d, 0xfc, 1, 2, 3], Ipv4Addr::new(10, 0, 0, 9))
     }
 
+    fn iface() -> InterfaceInfo {
+        InterfaceInfo {
+            name: "en0".into(),
+            address: Ipv4Addr::new(192, 168, 1, 100),
+            netmask: Ipv4Addr::new(255, 255, 255, 0),
+            mac: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+            internal: false,
+        }
+    }
+
     #[test]
-    fn random_ids_and_macs_are_in_range() {
+    fn random_device_ids_are_in_range() {
         for _ in 0..50 {
             let id = generate_stagehand_device_id();
             assert!((141..=211).contains(&id));
-            let mac = generate_stagehand_mac();
-            assert_eq!(&mac[..3], &[0xc8, 0x3d, 0xfc]);
         }
+    }
+
+    #[test]
+    fn mac_derives_from_the_interface_mac() {
+        assert_eq!(get_stagehand_mac(&iface()), [0xc8, 0x3d, 0xfc, 0x33, 0x44, 0x55]);
+    }
+
+    #[test]
+    fn mac_is_the_same_every_time_for_the_same_interface() {
+        assert_eq!(get_stagehand_mac(&iface()), get_stagehand_mac(&iface()));
+        assert_eq!(get_virtual_stagehand(&iface(), Some(150), None, None).mac_addr, get_stagehand_mac(&iface()));
+    }
+
+    #[test]
+    fn virtual_stagehand_takes_the_given_identity() {
+        let mac = get_stagehand_mac(&iface());
+        let device = get_virtual_stagehand(&iface(), Some(150), Some("Stagehand-Test"), Some(mac));
+        assert_eq!(device.id, 150);
+        assert_eq!(device.name, "Stagehand-Test");
+        assert_eq!(device.device_type, DeviceType::Stagehand);
+        assert_eq!(device.mac_addr, mac);
+        assert_eq!(device.ip, iface().address);
     }
 
     #[test]

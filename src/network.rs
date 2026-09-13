@@ -336,6 +336,10 @@ impl ProlinkNetwork {
 
         let connect_method = config.connect_method;
 
+        // Pick the device number once and keep it. A CDJ-3000 that already
+        // holds a record for our IP ignores a re-claim under a different
+        // number, so a disconnect/connect cycle must present the same identity
+        // (see [`get_stagehand_mac`]).
         let vcdj_id = config.vcdj_id.unwrap_or_else(|| {
             if connect_method == ConnectMethod::Stagehand {
                 generate_stagehand_device_id()
@@ -343,6 +347,7 @@ impl ProlinkNetwork {
                 DEFAULT_VCDJ_ID
             }
         });
+        self.inner.config.write().unwrap_or_else(|e| e.into_inner()).vcdj_id = Some(vcdj_id);
         let vcdj_name =
             config.vcdj_name.clone().or_else(|| (connect_method == ConnectMethod::Stagehand).then(|| "Stagehand".to_string()));
 
@@ -568,5 +573,86 @@ impl ProlinkNetwork {
             *slot = Some(processor);
         }
         slot.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{device_snapshot, DeviceId};
+    use crate::utils::net::InterfaceInfo;
+    use crate::virtualcdj::get_stagehand_mac;
+    use std::net::Ipv4Addr;
+
+    fn iface() -> InterfaceInfo {
+        InterfaceInfo {
+            name: "lo0".into(),
+            address: Ipv4Addr::new(127, 0, 0, 1),
+            netmask: Ipv4Addr::new(255, 255, 255, 0),
+            mac: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+            internal: false,
+        }
+    }
+
+    /// A network whose sockets are bound to ephemeral loopback ports, so the
+    /// test never touches the real Pro DJ Link ports.
+    async fn stagehand_network() -> ProlinkNetwork {
+        let feed = || async {
+            let socket = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("bind loopback");
+            Arc::new(UdpFeed::from_socket(socket))
+        };
+        let (announce_feed, beat_feed, status_feed) = (feed().await, feed().await, feed().await);
+
+        let config = NetworkConfig { iface: Some(iface()), connect_method: ConnectMethod::Stagehand, ..NetworkConfig::default() };
+
+        let device_manager = DeviceManager::new(announce_feed.packets(), None);
+        let status_emitter = StatusEmitter::new(Arc::clone(&status_feed), true);
+        let position_emitter = PositionEmitter::new(&beat_feed, true);
+
+        ProlinkNetwork::new(config, announce_feed, beat_feed, status_feed, device_manager, status_emitter, position_emitter)
+    }
+
+    /// The identity a Stagehand connection is currently announcing.
+    fn identity(network: &ProlinkNetwork) -> (DeviceId, [u8; 6]) {
+        let conn = network.connection().expect("connected");
+        let device = device_snapshot(&conn.vcdj);
+        (device.id, device.mac_addr)
+    }
+
+    /// A CDJ-3000 keeps one record per peer IP and ignores a later claim from
+    /// that IP under a different MAC or device number, so a
+    /// disconnect/connect cycle must re-present the identity it first
+    /// announced.
+    #[tokio::test]
+    async fn stagehand_identity_survives_a_reconnect() {
+        let network = stagehand_network().await;
+
+        network.connect().await.expect("connect");
+        let first = identity(&network);
+        network.disconnect().await.expect("disconnect");
+
+        network.connect().await.expect("reconnect");
+        let second = identity(&network);
+        network.disconnect().await.expect("disconnect");
+        network.close();
+
+        assert_eq!(second, first);
+    }
+
+    #[tokio::test]
+    async fn stagehand_claims_with_a_mac_derived_from_the_interface() {
+        let network = stagehand_network().await;
+        network.connect().await.expect("connect");
+
+        let (id, mac) = identity(&network);
+        assert_eq!(mac, get_stagehand_mac(&iface()));
+        assert!((141..=211).contains(&id));
+
+        // The chosen device number is pinned into the config so the next
+        // connect() re-presents it.
+        assert_eq!(network.config().vcdj_id, Some(id));
+
+        network.disconnect().await.expect("disconnect");
+        network.close();
     }
 }
