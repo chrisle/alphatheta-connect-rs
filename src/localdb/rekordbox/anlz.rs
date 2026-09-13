@@ -148,9 +148,11 @@ pub struct CueExtendedEntry {
     pub color_red: Option<u8>,
     pub color_green: Option<u8>,
     pub color_blue: Option<u8>,
-    /// For quantized loops, the loop size numerator / denominator (the last
-    /// four bytes of the reserved area after `color_id`).
+    /// The numerator of the loop size fraction for a quantized loop, e.g. 4
+    /// for a 4-beat loop. Zero when the loop is not quantized.
     pub loop_numerator: Option<u16>,
+    /// The denominator of the loop size fraction for a quantized loop, e.g. 1
+    /// for a 4-beat loop.
     pub loop_denominator: Option<u16>,
 }
 
@@ -406,8 +408,8 @@ fn parse_body(tag: SectionTag, b: &[u8], len_header: u32, len_tag: u32) -> Resul
                 let time = r.u32()?;
                 let loop_time = r.u32()?;
                 let color_id = r.u8()?;
-                // Loops seem to have some non-zero values in the last four
-                // bytes of this: the quantized loop numerator / denominator.
+                // Seven reserved bytes, then the loop size fraction of a
+                // quantized loop (both zero when the loop is not quantized).
                 let reserved = r.bytes(11)?;
                 let loop_numerator = u16::from_be_bytes([reserved[7], reserved[8]]);
                 let loop_denominator = u16::from_be_bytes([reserved[9], reserved[10]]);
@@ -417,9 +419,9 @@ fn parse_body(tag: SectionTag, b: &[u8], len_header: u32, len_tag: u32) -> Resul
                 if len_entry > 43 {
                     len_comment = r.u32()?;
                     let text = r.bytes(len_comment as usize)?;
-                    // The comment carries a trailing NUL.
-                    let text = &text[..text.len().saturating_sub(2)];
-                    comment = Some(utf16be(text));
+                    // The tag stores the comment with a trailing NUL, which is
+                    // not part of what the DJ typed.
+                    comment = Some(utf16be(text).trim_end_matches('\0').to_string());
                 }
                 let after_comment = len_entry.saturating_sub(len_comment);
                 let color_code = if after_comment > 44 { Some(r.u8()?) } else { None };
