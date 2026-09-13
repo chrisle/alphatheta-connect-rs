@@ -19,8 +19,10 @@ pub fn make_cue_and_loop(cues: &[CueEntry]) -> Vec<CueAndLoop> {
     cues.iter()
         .filter_map(|entry| {
             // Cues with the status 0 are likely leftovers that were removed.
-            // Upstream keys the hot cue button off `type` (1/2) once hot_cue
-            // is non-zero; the button number itself is `hot_cue`.
+            //
+            // `hot_cue` is the button number (1-8, A-H); zero marks a memory
+            // cue. `cue_type` only says whether the entry is a cue point (1)
+            // or a loop (2). Entries that are neither are dropped.
             let button = if entry.hot_cue == 0 { None } else { HotcueButton::from_u8(entry.hot_cue.min(255) as u8) };
             let is_cue = entry.cue_type == 0x01;
             let is_loop = entry.cue_type == 0x02;
@@ -76,7 +78,9 @@ pub fn make_extended_cues(cues: &[CueExtendedEntry]) -> Vec<ExtendedCue> {
                 });
             }
 
-            // Add comment if present
+            // Add comment if present. The tag stores it with a trailing NUL,
+            // which the parser has already stripped; a comment that was only
+            // the NUL is left out.
             if entry.len_comment > 0 {
                 if let Some(c) = entry.comment.as_ref().filter(|c| !c.is_empty()) {
                     cue.comment = Some(c.clone());
@@ -222,6 +226,142 @@ mod tests {
             out[1],
             CueAndLoop::HotLoop { offset: 2000.0, length: 1000.0, button: HotcueButton::C, label: None, color: None }
         );
+    }
+
+    fn cue(hot_cue: u32, cue_type: u8, time: u32, loop_time: u32) -> CueEntry {
+        CueEntry { hot_cue, status: 1, order_first: 0, order_last: 0, cue_type, time, loop_time }
+    }
+
+    #[test]
+    fn cue_and_loops_map_memory_cues_and_loops() {
+        let out = make_cue_and_loop(&[cue(0, 1, 1000, 0), cue(0, 2, 2000, 3000)]);
+        assert_eq!(
+            out,
+            vec![
+                CueAndLoop::CuePoint { offset: 1000.0, label: None, color: None },
+                CueAndLoop::Loop { offset: 2000.0, length: 1000.0, label: None, color: None },
+            ]
+        );
+    }
+
+    #[test]
+    fn cue_and_loops_take_the_button_from_hot_cue_not_the_type() {
+        let out = make_cue_and_loop(&[cue(3, 1, 4000, 0), cue(8, 2, 5000, 6000), cue(1, 1, 7000, 0)]);
+        assert_eq!(
+            out,
+            vec![
+                CueAndLoop::HotCue { offset: 4000.0, button: HotcueButton::C, label: None, color: None },
+                CueAndLoop::HotLoop { offset: 5000.0, length: 1000.0, button: HotcueButton::H, label: None, color: None },
+                CueAndLoop::HotCue { offset: 7000.0, button: HotcueButton::A, label: None, color: None },
+            ]
+        );
+    }
+
+    #[test]
+    fn cue_and_loops_drop_entries_that_are_neither_a_cue_nor_a_loop() {
+        let out = make_cue_and_loop(&[cue(0, 0, 100, 0), cue(0, 1, 200, 0), cue(0, 9, 300, 0)]);
+        assert_eq!(out, vec![CueAndLoop::CuePoint { offset: 200.0, label: None, color: None }]);
+        assert!(make_cue_and_loop(&[cue(0, 0, 100, 0)]).is_empty());
+    }
+
+    fn extended(hot_cue: u32, cue_type: u8, time: u32, loop_time: u32) -> CueExtendedEntry {
+        CueExtendedEntry {
+            hot_cue,
+            cue_type,
+            time,
+            loop_time,
+            color_id: 0,
+            comment: None,
+            len_comment: 0,
+            color_code: None,
+            color_red: None,
+            color_green: None,
+            color_blue: None,
+            loop_numerator: Some(0),
+            loop_denominator: Some(0),
+        }
+    }
+
+    #[test]
+    fn extended_cues_map_a_plain_memory_cue() {
+        let out = make_extended_cues(&[extended(0, 1, 1000, 0)]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].hot_cue, 0);
+        assert_eq!(out[0].cue_type, 1);
+        assert_eq!(out[0].time, 1000);
+        assert_eq!(out[0].loop_time, None);
+        assert_eq!(out[0].color_id, None);
+        assert_eq!(out[0].comment, None);
+    }
+
+    #[test]
+    fn extended_cues_carry_the_quantized_loop_size() {
+        let mut entry = extended(0, 2, 2000, 6000);
+        entry.color_id = 5;
+        entry.loop_numerator = Some(4);
+        entry.loop_denominator = Some(1);
+
+        let out = make_extended_cues(&[entry]);
+        assert_eq!(out[0].loop_time, Some(6000));
+        assert_eq!(out[0].color_id, Some(5));
+        assert_eq!(out[0].loop_numerator, Some(4));
+        assert_eq!(out[0].loop_denominator, Some(1));
+    }
+
+    #[test]
+    fn extended_cues_leave_loop_size_out_when_not_quantized() {
+        let out = make_extended_cues(&[extended(0, 2, 0, 500)]);
+        assert_eq!(out[0].loop_numerator, None);
+        assert_eq!(out[0].loop_denominator, None);
+    }
+
+    #[test]
+    fn extended_cues_map_colors_and_comments() {
+        let mut entry = extended(3, 1, 3000, 0);
+        entry.len_comment = 10;
+        entry.comment = Some("Drop".into());
+        entry.color_code = Some(0x2a);
+        entry.color_red = Some(255);
+        entry.color_green = Some(0);
+        entry.color_blue = Some(0);
+
+        let out = make_extended_cues(&[entry]);
+        assert_eq!(out[0].comment.as_deref(), Some("Drop"));
+        assert_eq!(out[0].color_code, Some(0x2a));
+        assert_eq!(out[0].color_rgb, Some(Rgb { r: 255, g: 0, b: 0 }));
+    }
+
+    #[test]
+    fn extended_cues_drop_a_comment_that_was_only_the_trailing_nul() {
+        let mut entry = extended(0, 1, 0, 0);
+        entry.len_comment = 2;
+        entry.comment = Some(String::new());
+
+        let out = make_extended_cues(&[entry]);
+        assert_eq!(out[0].comment, None);
+    }
+
+    #[test]
+    fn song_structure_reads_phrase_index_beat_and_kind() {
+        let entries = vec![
+            SongStructureEntry { phrase_number: 1, beat_number: 1, kind: 1, fill_in: 0, fill_in_beat_number: 0 },
+            SongStructureEntry { phrase_number: 2, beat_number: 65, kind: 2, fill_in: 0, fill_in_beat_number: 0 },
+            SongStructureEntry { phrase_number: 3, beat_number: 129, kind: 5, fill_in: 0, fill_in_beat_number: 0 },
+        ];
+        let s = make_song_structure(1, 0, 256, &entries);
+        let got: Vec<(u16, u16, u16, &str)> =
+            s.phrases.iter().map(|p| (p.index, p.beat, p.kind, p.phrase_type.as_str())).collect();
+        assert_eq!(got, vec![(1, 1, 1, "Intro"), (2, 65, 2, "Up"), (3, 129, 5, "Chorus")]);
+        assert!(s.phrases.iter().all(|p| p.fill.is_none() && p.fill_beat.is_none()));
+    }
+
+    #[test]
+    fn song_structure_reads_mood_bank_and_end_beat() {
+        let s = make_song_structure(2, 7, 512, &[]);
+        assert_eq!(s.mood, Mood::Mid);
+        assert_eq!(s.bank, Bank::Club1);
+        assert_eq!(s.end_beat, 512);
+        assert!(s.phrases.is_empty());
     }
 
     #[test]
