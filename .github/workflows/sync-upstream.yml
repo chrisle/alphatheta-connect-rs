@@ -4,8 +4,10 @@ name: Sync upstream
 # https://github.com/chrisle/alphatheta-connect.
 #
 # UPSTREAM_COMMIT records the upstream `main` commit this port matches. When
-# upstream has moved past it, a Claude agent ports the diff, the workflow gates
-# the result with cargo, and a pull request is opened for review.
+# upstream has moved past it, a Claude agent ports the diff and the workflow
+# gates the result with cargo build / test / clippy. A port that passes the
+# gate is merged into main; one that fails is left as a pull request for a
+# human, titled "[needs attention]".
 #
 # Triggers:
 #   - repository_dispatch (event_type: upstream-changed) from the upstream
@@ -355,6 +357,20 @@ jobs:
             --title "$title" \
             --body-file "$RUNNER_TEMP/port/pr-body.md"
 
+          # A port that passed the cargo gate goes straight into main. One that
+          # did not stays open for a human.
+          if [ "$GATE" = "pass" ]; then
+            gh pr merge "$BRANCH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --squash \
+              --delete-branch \
+              --subject "$subject" \
+              --body "Ports https://github.com/$UPSTREAM_REPO/compare/$BASE...$HEAD into the Rust crate. Upstream commit: $HEAD"
+            echo "Merged into main." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Left open for review: the cargo gate failed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Note a port that changed no source
         if: steps.scan.outputs.run == 'true' && steps.verify.outputs.agent_changed == 'false'
         run: |
@@ -363,5 +379,5 @@ jobs:
       - name: Fail the job when the gate failed
         if: steps.scan.outputs.run == 'true' && steps.verify.outputs.gate == 'fail'
         run: |
-          echo "::error::The port was pushed and a pull request opened, but the cargo gate failed. See the pull request."
+          echo "::error::The port was pushed and a pull request opened, but the cargo gate failed, so it was not merged. See the pull request."
           exit 1

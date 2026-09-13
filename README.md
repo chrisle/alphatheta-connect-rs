@@ -107,8 +107,9 @@ toolchain and `perl` are needed to build the crate.
 `UPSTREAM_COMMIT` records the upstream `main` commit this port matches. The
 `sync-upstream` workflow (on a schedule, or immediately on a
 `repository_dispatch` from upstream) ports any newer upstream commits with a
-Claude agent, gates the result with `cargo build` / `test` / `clippy`, and
-opens a pull request. The agent and its skill are not part of this repository;
+Claude agent and gates the result with `cargo build` / `test` / `clippy`. A
+port that passes is merged into `main`; one that fails is left as a
+"[needs attention]" pull request. The agent and its skill are not part of this repository;
 they are installed on the runner host with `scripts/install-agent.sh`.
 
 ## Thanks To
